@@ -1,7 +1,10 @@
 @echo off
 chcp 65001 >nul
 title 心理学人体模型
-echo 正在启动本地服务器...
 cd /d "%~dp0"
-start "" http://localhost:8123/index.html
-python -m http.server 8123
+python serve.py
+if errorlevel 1 (
+  echo.
+  echo 没能启动。请确认电脑装了 Python，或把这个窗口的报错截图发给 Claude。
+  pause
+)
