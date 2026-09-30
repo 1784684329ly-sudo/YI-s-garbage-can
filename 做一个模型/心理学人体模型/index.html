@@ -57,6 +57,37 @@
   .chip{display:flex; align-items:center; gap:6px; background:var(--panel2); color:#cdd6e4;
     border:1px solid var(--line); border-radius:16px; padding:5px 11px; font-size:12px; cursor:pointer;}
   .chip:hover{background:#28313f;}
+  .chip .cnt{font-size:10px; color:var(--muted);}
+  .chip.sm{padding:2px 9px; font-size:11px;}
+  /* 真题选项卡 */
+  .exam-tools{display:flex; flex-direction:column; gap:6px; margin:4px 0 2px;}
+  .subtabs{display:flex; gap:4px;}
+  .subtab{flex:1; background:transparent; color:var(--muted); border:1px solid var(--line);
+    border-radius:6px; padding:4px 0; font-size:12px; cursor:pointer;}
+  .subtab.active{color:var(--text); border-color:var(--accent);}
+  .search{width:100%; background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:6px 8px; font-size:12px; font-family:inherit;}
+  .search:focus{outline:none; border-color:var(--accent);}
+  .nav-item .nm{flex:1 1 0; min-width:0;}
+  .badge{margin-left:auto; font-size:10px; color:var(--muted); border:1px solid var(--line);
+    border-radius:8px; padding:0 6px; line-height:16px; flex:none;}
+  .nav-item.active .badge{color:#0d1017; border-color:rgba(13,16,23,.35);}
+  .qlist{list-style:none; margin:0!important;}
+  .qlist li{padding:10px 0; border-bottom:1px dashed var(--line); margin:0!important;}
+  .qlist li:last-child{border-bottom:none;}
+  .qmeta{display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11px; color:var(--muted); margin-bottom:4px;}
+  .qmeta b{color:var(--text); font-weight:600;}
+  .qsub{padding:0 6px; border-radius:6px; border:1px solid var(--line);}
+  .qtopics{margin-top:6px; align-items:center;}
+  .qlabel{font-size:11px; color:var(--muted);}
+  .link{background:none; border:none; color:var(--accent); font:inherit; font-weight:600; cursor:pointer; padding:0; text-align:left;}
+  .link:hover{text-decoration:underline;}
+  .bar-row{display:flex; align-items:center; gap:8px; font-size:12px; margin:5px 0;}
+  .bar-row span{width:36px; color:#cdd6e4;}
+  .bar-row b{width:28px; text-align:right; font-weight:400; color:var(--muted);}
+  .bar{flex:1; height:8px; background:var(--panel2); border-radius:4px; overflow:hidden;}
+  .bar i{display:block; height:100%; background:var(--accent); border-radius:4px;}
+  mark{background:rgba(138,180,255,.35); color:inherit; border-radius:3px; padding:0 1px;}
   /* 中间 3D */
   #stage{position:relative;}
   #scene{position:absolute; inset:0;}
@@ -131,10 +162,11 @@
 <body>
   <aside id="sidebar">
     <h1>🧠 心理学人体模型</h1>
-    <div class="hint">真实解剖大脑（Z-Anatomy）。点结构看详情；列表外的结构也能点、可自己补资料。</div>
+    <div class="hint">真实解剖大脑（Z-Anatomy）。点结构看详情；列表外的结构也能点、可自己补资料。「真题」里是北大347历年真题（2012–2026）和考点。</div>
     <div id="tabs">
       <button id="tab-struct" class="tab active">按结构</button>
       <button id="tab-func" class="tab">按功能</button>
+      <button id="tab-exam" class="tab">真题</button>
     </div>
     <div id="nav"></div>
   </aside>
