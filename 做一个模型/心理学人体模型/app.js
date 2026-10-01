@@ -4,13 +4,13 @@
 // ============================================================
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=3';
+import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=4';
 import { ATLAS } from './atlas.js';
-import { QUESTIONS } from './questions.js?v=3';
-import { MECHS } from './mechanisms.js';
-import { DISORDER_GROUPS, DISORDERS } from './disorders.js';
+import { QUESTIONS } from './questions.js?v=4';
+import { MECHS } from './mechanisms.js?v=4';
+import { DISORDER_GROUPS, DISORDERS } from './disorders.js?v=4';
 
-window.__PSYCH_APP_VERSION = 3;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
+window.__PSYCH_APP_VERSION = 4;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
 
 // ---------- 场景 ----------
 const canvasWrap = document.getElementById('scene');
@@ -105,6 +105,11 @@ loader.load('./models/brain.glb', (gltf) => {
     o.userData.baseEmissive = st ? 0.12 : 0;
     if (st) st._meshes.push(o);
   });
+
+  // 模型里胼胝体、穹窿、前连合等挂在“左侧端脑白质”网格下面，橄榄核等挂在延髓下面。
+  // three.js 中父物体隐藏时子物体也会消失——把皮层滑杆拉到 0 时胼胝体就跟着白质一起不见了。
+  // 这里把所有网格提到同一层（attach 保持世界坐标不变），让每块的显隐互不影响。
+  for (const o of allMeshes) if (o.parent && o.parent.isMesh) gltf.scene.attach(o);
 
   // 以几何中心的质心为原点居中，再放大到舒适尺寸
   const centroid = centers.reduce((a, c) => a.add(c), new THREE.Vector3()).multiplyScalar(1 / centers.length);
@@ -292,10 +297,8 @@ function selectStructure(s, back = null) {
 }
 function selectFunction(f) {
   backContext = null;
-  clearHighlight();
-  selectedStructs = (f.members || []).map(id => structById.get(id)).filter(Boolean);
-  for (const st of selectedStructs) for (const m of (st._meshes || [])) highlightMesh(m, st.color);
-  computeFade(); applyLayers(); renderFunctionInfo(f); setNavActive('fn:' + f.id);
+  showTargets(f.members || [], f.fine || []);
+  renderFunctionInfo(f); setNavActive('fn:' + f.id);
 }
 // 点集合区域（额叶/边缘系统等），把该区所有结构一起亮
 function selectGroup(name, ids, navId = null) {
@@ -401,7 +404,26 @@ for (const q of brainQs) {
 for (const d of DISORDERS) for (const sid of d.structs) pushTo(disByStruct, sid, d);
 
 function esc(t) { return String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function listHtml(items) { return '<ul>' + (items || []).map(t => `<li>${esc(t)}</li>`).join('') + '</ul>'; }
+// **关键词** → 加粗
+function rich(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+function listHtml(items) { return '<ul>' + (items || []).map(t => `<li>${rich(t)}</li>`).join('') + '</ul>'; }
+// 机制/病变/治疗：每项是一句话，或 { h: 小标题, items: [...] } 的一组
+function richList(arr, ordered = false) {
+  let html = '', buf = [];
+  const flush = (tag) => {
+    if (buf.length) html += `<${tag} class="mech-steps">${buf.map(t => `<li>${rich(t)}</li>`).join('')}</${tag}>`;
+    buf = [];
+  };
+  for (const x of arr || []) {
+    if (typeof x === 'string') { buf.push(x); continue; }
+    flush(ordered ? 'ol' : 'ul');
+    html += `<div class="sub-h">${rich(x.h)}</div>`;
+    buf = x.items.slice(); flush('ul');
+  }
+  flush(ordered ? 'ol' : 'ul');
+  return html;
+}
+function flatText(arr) { return (arr || []).flatMap(x => typeof x === 'string' ? [x] : [x.h, ...x.items]); }
 
 // ---------- 信息卡 ----------
 const panel = document.getElementById('panel');
@@ -450,9 +472,8 @@ function bindRelated(back) {
 }
 function renderFunctionInfo(f) {
   currentStruct = null;
-  const members = (f.members || []).map(id => structById.get(id)).filter(Boolean);
-  const chips = members.map(s =>
-    `<button class="chip" data-id="${s.id}"><span class="dot" style="background:${hex(s.color)}"></span>${esc(s.name)}</button>`).join('');
+  const chips = structChips(f.members || [], f.fine || []);
+  const dis = (f.dis || []).map(id => disById.get(id)).filter(Boolean);
   panel.innerHTML = `
     <div class="p-head" style="border-color:#c7b48a">
       <div class="p-tag">功能系统</div>
@@ -462,8 +483,9 @@ function renderFunctionInfo(f) {
     <div class="p-body">
       <div class="edit-bar"><button id="funcEditBtn">✏️ 编辑此功能</button></div>
       <section><h3>🧩 参与的脑区（点开看单个，可返回）</h3><div class="chips">${chips || '<span style="color:var(--muted)">未选脑区</span>'}</div></section>
-      ${f.detail ? `<section><h3>📖 说明</h3><p>${esc(f.detail)}</p></section>` : ''}
-      ${f.points && f.points.length ? `<section><h3>📚 心理学知识点</h3>${listHtml(f.points)}</section>` : ''}
+      ${f.detail ? `<section><h3>📖 说明</h3><p>${rich(f.detail)}</p></section>` : ''}
+      ${f.points && f.points.length ? `<section><h3>📚 要点</h3>${listHtml(f.points)}</section>` : ''}
+      ${dis.length ? `<section><h3>🧬 相关疾病（点开看病变机理）</h3><div class="chips">${dis.map(d => `<button class="chip" data-dis="${d.id}">${esc(d.name)}</button>`).join('')}</div></section>` : ''}
       ${(qsByFn.get(f.id) || []).length ? `<section><h3>📝 相关真题（点开看脑机制）</h3><div class="chips">${qLinks(qsByFn.get(f.id))}</div></section>` : ''}
     </div>`;
   document.getElementById('funcEditBtn').onclick = () => renderFuncEdit(f);
@@ -680,7 +702,7 @@ function buildStructureTab() {
 function funcItem(f) {
   const item = document.createElement('div');
   item.className = 'nav-item'; item.dataset.id = 'fn:' + f.id;
-  item.innerHTML = `${esc(f.name)}<div class="nav-sub">${(f.members || []).map(id => structById.get(id)?.name).filter(Boolean).join(' · ') || '（未选脑区）'}</div>`;
+  item.innerHTML = `${esc(f.name)}<div class="nav-sub">${esc((f.members || []).map(id => structById.get(id)?.name).filter(Boolean).join(' · ') || f.brief || '（未选脑区）')}</div>`;
   item.onclick = () => modelReady && selectFunction(f);
   return item;
 }
@@ -794,7 +816,7 @@ function mechBox(q, b) {
   return `<div class="mech-box">
     <div class="mech-title">🧠 ${esc(b.title)}</div>
     <div class="chips">${structChips(b.structs, b.fine || [])}</div>
-    <ol class="mech-steps">${b.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+    ${richList(b.steps, true)}
     ${q.extra ? `<p class="mech-extra">👉 ${esc(q.extra)}</p>` : ''}
     ${b.dis ? `<button class="link" data-dis="${b.dis.id}">在「变态」专栏看${esc(b.dis.name)}的治疗与相关脑区 ›</button>` : ''}
   </div>`;
@@ -864,7 +886,7 @@ function showSearch(kw) {
     const k = kw.toLowerCase();
     const qs = QUESTIONS.filter(q => {
       const b = brainOf(q);
-      return [q.text, q.short, b ? b.title : '', ...(b ? b.steps : [])].join(' ').toLowerCase().includes(k);
+      return [q.text, q.short, b ? b.title : '', ...(b ? flatText(b.steps) : [])].join(' ').toLowerCase().includes(k);
     });
     panel.innerHTML = `
       <div class="p-head" style="border-color:#8ab4ff">
@@ -943,8 +965,8 @@ function renderDisorderInfo(d) {
     <div class="p-body">
       ${backBtnHtml()}
       <section><h3>🧠 相关脑区（已高亮）</h3><div class="chips">${structChips(d.structs, d.fine || [])}</div></section>
-      <section><h3>🧬 病变机理</h3><ol class="mech-steps">${d.mech.map(t => `<li>${esc(t)}</li>`).join('')}</ol></section>
-      <section><h3>💊 治疗如何作用于大脑</h3>${listHtml(d.treat)}</section>
+      <section><h3>🧬 病变机理</h3>${richList(d.mech, true)}</section>
+      <section><h3>💊 治疗如何作用于大脑</h3>${richList(d.treat)}</section>
       ${qs.length ? `<section><h3>📝 考过的真题（点开看）</h3><div class="chips">${qLinks(qs)}</div></section>` : ''}
     </div>`;
   bindBackBtn();

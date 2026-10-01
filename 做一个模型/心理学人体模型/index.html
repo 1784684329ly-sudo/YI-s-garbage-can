@@ -100,6 +100,10 @@
   .mech-title{font-size:14px; font-weight:700; color:#ffe29a; margin-bottom:8px;}
   .mech-steps{margin:10px 0 0 18px!important; padding:0;}
   .mech-steps li{font-size:13px; line-height:1.7; color:#cdd6e4; margin-bottom:6px;}
+  .sub-h{margin:14px 0 4px; font-size:13px; font-weight:700; color:#ffe29a;}
+  .mech-box .sub-h:first-of-type, section > .sub-h:first-of-type{margin-top:6px;}
+  .p-body b, .mech-box b{color:#fff; font-weight:700;}
+  ul.mech-steps{list-style:disc;}
   .mech-extra{margin-top:8px; font-size:13px; color:#e7d6a8!important;}
   .fine-chip{cursor:default; border-color:#6b5a2e; color:#ffe29a;}
   .fine-chip .dot{background:#ffc94a;}
@@ -224,11 +228,11 @@
   { "imports": { "three": "./vendor/three.module.js" } }
   </script>
   <!-- ?v= 让浏览器不用旧版缓存；改了 app.js/data.js 且有人反映还是旧版时，把数字加一 -->
-  <script type="module" src="./app.js?v=3"></script>
+  <script type="module" src="./app.js?v=4"></script>
   <script>
     // 自检：app.js 没执行、或执行的是浏览器缓存里的旧版时，在页面顶部提示强制刷新
     window.addEventListener('load', function () {
-      if (window.__PSYCH_APP_VERSION === 3) return;
+      if (window.__PSYCH_APP_VERSION === 4) return;
       var d = document.createElement('div');
       d.className = 'stale-banner';
       d.innerHTML = '⚠ 页面没有完整更新（浏览器用了缓存里的旧文件）。请按 <b>Ctrl + Shift + R</b>，或<b>按住 Ctrl 再点刷新按钮</b>。';
