@@ -4,13 +4,13 @@
 // ============================================================
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=4';
+import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=5';
 import { ATLAS } from './atlas.js';
-import { QUESTIONS } from './questions.js?v=4';
-import { MECHS } from './mechanisms.js?v=4';
-import { DISORDER_GROUPS, DISORDERS } from './disorders.js?v=4';
+import { QUESTIONS } from './questions.js?v=5';
+import { MECHS } from './mechanisms.js?v=5';
+import { DISORDER_GROUPS, DISORDERS } from './disorders.js?v=5';
 
-window.__PSYCH_APP_VERSION = 4;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
+window.__PSYCH_APP_VERSION = 5;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
 
 // ---------- 场景 ----------
 const canvasWrap = document.getElementById('scene');
@@ -134,7 +134,6 @@ loader.load('./models/brain.glb', (gltf) => {
     meshesByBase.get(b).push(o);
   }
 
-  buildLabels();
   fitCameraToScene();
   applyLayers();
   modelReady = true;
@@ -159,12 +158,14 @@ function updateCamera() {
   camera.lookAt(target);
 }
 const _box = new THREE.Box3(), _sph = new THREE.Sphere();
+let brainRadius = 1;
 function fitCameraToScene() {
   _box.makeEmpty();
   for (const o of allMeshes) _box.expandByPoint(o.userData.center);
   if (_box.isEmpty()) return;
   _box.getCenter(target);
   _box.getBoundingSphere(_sph);
+  brainRadius = _sph.radius;
   const vFov = THREE.MathUtils.degToRad(camera.fov);
   const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
   radius = (_sph.radius + 0.5) / Math.sin(Math.min(vFov, hFov) / 2) * 1.15;
@@ -172,7 +173,7 @@ function fitCameraToScene() {
   maxRadius = radius * 3;
 }
 const el = renderer.domElement;
-el.addEventListener('pointerdown', e => { dragging = true; moved = 0; lastX = e.clientX; lastY = e.clientY; });
+el.addEventListener('pointerdown', e => { dragging = true; moved = 0; lastX = e.clientX; lastY = e.clientY; camGoal = null; });
 window.addEventListener('pointerup', () => { dragging = false; });
 let lastPx = 0, lastPy = 0;
 window.addEventListener('pointermove', e => {
@@ -221,10 +222,17 @@ el.addEventListener('click', () => {
   }
 });
 
-// ---------- 高亮（支持多结构；选中永远画在最前，深部也看得见） ----------
+// ---------- 高亮：每个被选部位一种鲜明颜色；标签用引线拉到大脑外侧 ----------
 const structById = new Map(activeStructs.map(s => [s.id, s]));
 let selectedStructs = [], selectedRaw = null;
 const highlightSet = new Set();
+// 区分度高的配色：模型上的部位、引线、标签、右栏芯片、图例用同一种颜色，靠颜色对应
+const PALETTE = [0xff5c5c, 0x4dabf7, 0xffd43b, 0x51cf66, 0xcc5de8, 0xff922b, 0x22b8cf, 0xf06595, 0xa9e34b, 0x9775fa, 0x20c997, 0xe8590c];
+let targets = [];          // 当前高亮的部位 [{ key, name, color, meshes, anchors, el, line, dot, struct?, base? }]
+let focusKey = null;       // 聚焦中的部位：其余高亮部位变透明
+let focusMeshes = new Set();
+let camGoal = null;        // 聚焦时镜头自动转到的角度
+let viewBack = null;       // 图例里“查看脑区卡”返回到当前视图
 function restore(m) {
   m.material.color.set(m.userData.baseColor);
   m.material.emissive.set(m.userData.struct ? m.userData.struct.color : 0x000000);
@@ -235,38 +243,104 @@ function restore(m) {
 function clearHighlight() {
   for (const m of highlightSet) restore(m);
   highlightSet.clear(); selectedStructs = []; selectedRaw = null; fadeLayers.clear();
-  for (const t of fineTargets) t.el.remove();
-  fineTargets = [];
+  for (const t of targets) { t.el.remove(); t.line.remove(); t.dot.remove(); }
+  targets = []; focusKey = null; focusMeshes = new Set();
+  renderLegend();
 }
-// 金色细分高亮：中脑VTA、尾状核、眶额等没有单独结构卡的部位，带标签
-const FINE_COLOR = 0xffc94a;
-let fineTargets = [];   // [{ meshes, center, el }]
-// 高亮一组结构（整块、结构色）+ 细分网格（"网格基名=显示名"，金色）
-function showTargets(structIds = [], fine = []) {
+const _hi = new THREE.Color(), _hsl = {};
+function vivid(c) { _hi.set(c).getHSL(_hsl); return _hi.setHSL(_hsl.h, Math.max(_hsl.s, 0.6), 0.6).getHex(); }
+// 结构 id / "网格基名=显示名" → 目标说明，并按顺序分配颜色（右栏芯片用同一份，保证颜色一致）
+function targetSpecs(structIds = [], fine = []) {
+  const specs = [];
+  for (const id of structIds) { const s = structById.get(id); if (s) specs.push({ key: 's:' + id, name: s.name, struct: s }); }
+  for (const f of fine) { const [base, label] = f.split('='); specs.push({ key: 'm:' + base, name: label || base, base }); }
+  specs.forEach((sp, i) => { sp.color = specs.length === 1 && sp.struct ? vivid(sp.struct.color) : PALETTE[i % PALETTE.length]; });
+  return specs;
+}
+function showTargets(structIds = [], fine = []) { setTargets(targetSpecs(structIds, fine)); }
+function setTargets(specs) {
   clearHighlight();
-  selectedStructs = structIds.map(id => structById.get(id)).filter(Boolean);
-  for (const st of selectedStructs) for (const m of (st._meshes || [])) highlightMesh(m, st.color);
-  for (const spec of fine) {
-    const [base, label] = spec.split('=');
-    const meshes = meshesByBase.get(base) || [];
-    if (!meshes.length) continue;
-    for (const m of meshes) highlightMesh(m, FINE_COLOR);
-    const center = meshes.reduce((a, m) => a.add(m.userData.center.clone()), new THREE.Vector3())
-      .multiplyScalar(1 / meshes.length);
-    const el = document.createElement('div');
-    el.className = 'label fine'; el.textContent = (label || base).split('（')[0];   // 三维标签只放短名，括号说明留在右栏
-    labelLayer.appendChild(el);
-    fineTargets.push({ meshes, center, el });
+  for (const sp of specs) {
+    const meshes = sp.meshes || (sp.struct ? sp.struct._meshes || [] : meshesByBase.get(sp.base) || []);
+    if (sp.struct) selectedStructs.push(sp.struct);
+    // 左右成对的部位分别算中心，标签指向离镜头近的那一侧（不再全挤在中线）
+    const sides = new Map();
+    for (const m of meshes) {
+      const side = /_l(_\d+)?$/i.test(m.name) ? 'l' : /_r(_\d+)?$/i.test(m.name) ? 'r' : 'c';
+      if (!sides.has(side)) sides.set(side, []);
+      sides.get(side).push(m.userData.center);
+    }
+    const anchors = [...sides.values()].map(cs => cs.reduce((a, c) => a.add(c), new THREE.Vector3()).multiplyScalar(1 / cs.length));
+    const t = { ...sp, meshes, anchors };
+    const col = hex(sp.color);
+    t.el = document.createElement('div');
+    t.el.className = 'callout'; t.el.style.setProperty('--c', col);
+    t.el.innerHTML = `<span class="dot" style="background:${col}"></span>${esc(sp.name.split('（')[0])}`;
+    t.el.title = '点一下单独看这个部位';
+    t.el.onclick = () => toggleFocus(t.key);
+    labelLayer.appendChild(t.el);
+    t.line = svgEl('line', { stroke: col }); t.dot = svgEl('circle', { r: 4, fill: col });
+    leaderSvg.append(t.line, t.dot);
+    targets.push(t);
   }
-  computeFade(); applyLayers();
+  paintTargets(); renderLegend(); computeFade(); applyLayers(); projectLabels();
 }
-const _hi = new THREE.Color();
-function highlightMesh(m, color) {
-  _hi.set(color).lerp(new THREE.Color(0xffffff), 0.35); // 提亮，明显扎眼
-  m.material.color.copy(_hi);
+function highlightMesh(m, color, intensity = 0.45) {
+  m.material.color.set(color);
   m.material.emissive.set(color);
-  m.material.emissiveIntensity = 1.1;    // 强发光（保留深度测试，画成实心亮块）
+  m.material.emissiveIntensity = intensity;
   highlightSet.add(m);
+}
+// 上色：先画未聚焦的，再画聚焦的（同一网格同时属于两个目标时，聚焦的颜色优先）
+function paintTargets() {
+  const order = [...targets.filter(t => t.key !== focusKey), ...targets.filter(t => t.key === focusKey)];
+  for (const t of order) {
+    const on = !focusKey || t.key === focusKey;
+    for (const m of t.meshes) highlightMesh(m, t.color, focusKey ? (on ? 0.8 : 0.15) : 0.45);
+    t.el.classList.toggle('dim', !on); t.el.classList.toggle('on', !!focusKey && on);
+    t.line.style.opacity = on ? 0.9 : 0.15; t.dot.style.opacity = on ? 1 : 0.2;
+  }
+  document.querySelectorAll('[data-tkey]').forEach(c => c.classList.toggle('active', c.dataset.tkey === focusKey));
+}
+// 聚焦一个部位：其余高亮变透明，镜头转到能看到它的一侧；再点一次取消
+function toggleFocus(key) {
+  focusKey = focusKey === key ? null : key;
+  const t = targets.find(x => x.key === focusKey);
+  focusMeshes = new Set(t ? t.meshes : []);
+  paintTargets(); computeFade(); applyLayers(); renderLegend(); projectLabels();
+  if (t) turnCameraTo(t);
+}
+function turnCameraTo(t) {
+  if (!t.anchors.length) return;
+  let a = t.anchors[0];
+  for (const c of t.anchors) if (c.distanceToSquared(camera.position) < a.distanceToSquared(camera.position)) a = c;
+  const d = a.clone().sub(target);
+  if (d.length() < brainRadius * 0.2) return;      // 中线深部结构（丘脑、胼胝体等）：保持当前角度
+  d.normalize();
+  const ph = Math.acos(THREE.MathUtils.clamp(d.y, -1, 1));
+  camGoal = { theta: Math.atan2(d.x, d.z), phi: THREE.MathUtils.clamp(ph * 0.7 + Math.PI / 2 * 0.3, 0.35, Math.PI - 0.35) };
+}
+// 模型左下角的图例：列出当前高亮的部位，点名字聚焦；聚焦时显示一句简介
+function renderLegend() {
+  const lg = document.getElementById('legend');
+  if (!lg) return;
+  if (targets.length < 2) { lg.hidden = true; lg.innerHTML = ''; return; }
+  const f = targets.find(t => t.key === focusKey);
+  lg.hidden = false;
+  lg.innerHTML = `<div class="lg-title">${f ? '聚焦中 · 再点一次取消' : '图例 · 点名字单独看'}</div>` +
+    targets.map(t => `<button class="lg-item" data-tkey="${t.key}"><span class="dot" style="background:${hex(t.color)}"></span>${esc(t.name.split('（')[0])}</button>`).join('') +
+    (f ? `<div class="lg-info">${esc(infoOf(f))}${f.struct ? `<button class="link" id="lgDetail">查看「${esc(f.struct.name)}」脑区卡 ›</button>` : ''}</div>` : '');
+  lg.querySelectorAll('[data-tkey]').forEach(b => {
+    b.classList.toggle('active', b.dataset.tkey === focusKey);
+    b.onclick = () => toggleFocus(b.dataset.tkey);
+  });
+  const d = document.getElementById('lgDetail');
+  if (d) d.onclick = () => selectStructure(f.struct, viewBack);
+}
+function infoOf(t) {
+  if (t.struct) return `${t.struct.name}：${t.struct.subtitle || ''}`;
+  const a = ATLAS[t.base], note = (t.name.match(/（(.+)）/) || [])[1];
+  return `${a ? a.zh : t.name}${note ? '（' + note + '）' : ''}${a ? '：' + a.brief : ''}`;
 }
 function setNavActive(id) {
   document.querySelectorAll('.nav-item').forEach(n =>
@@ -278,9 +352,8 @@ const fadeLayers = new Set();
 function computeFade() {
   fadeLayers.clear();
   const layers = new Set();
-  for (const st of selectedStructs) for (const m of (st._meshes || [])) layers.add(m.userData.layer);
-  if (selectedRaw) layers.add(selectedRaw.userData.layer);
-  for (const t of fineTargets) for (const m of t.meshes) layers.add(m.userData.layer);
+  const shown = focusKey ? targets.filter(t => t.key === focusKey) : targets;
+  for (const t of shown) for (const m of t.meshes) layers.add(m.userData.layer);
   if (!layers.size) return;
   if (layers.has('deep') || layers.has('limbic')) fadeLayers.add('cortex');
   if (layers.has('deep')) fadeLayers.add('limbic');
@@ -289,10 +362,8 @@ let backContext = null;   // 从功能/集合卡点进单个结构时记住来�
 let pendingView = null;   // 模型没加载完时打开的视图，加载后重放以补上高亮
 function selectStructure(s, back = null) {
   backContext = back;
-  clearHighlight();
-  selectedStructs = [s];
-  for (const m of (s._meshes || [])) highlightMesh(m, s.color);
-  computeFade(); applyLayers(); renderInfo(s); setNavActive(back ? back.navId : s.id);
+  showTargets([s.id]);
+  renderInfo(s); setNavActive(back ? back.navId : s.id);
   if (!modelReady) pendingView = () => selectStructure(s, back);
 }
 function selectFunction(f) {
@@ -303,17 +374,14 @@ function selectFunction(f) {
 // 点集合区域（额叶/边缘系统等），把该区所有结构一起亮
 function selectGroup(name, ids, navId = null) {
   backContext = null;
-  clearHighlight();
-  selectedStructs = ids.map(id => structById.get(id)).filter(Boolean);
-  for (const st of selectedStructs) for (const m of (st._meshes || [])) highlightMesh(m, st.color);
-  computeFade(); applyLayers(); renderGroupInfo(name, ids, navId); setNavActive(navId);
+  showTargets(ids);
+  renderGroupInfo(name, ids, navId); setNavActive(navId);
 }
 function selectRawMesh(o) {
   backContext = null;
-  clearHighlight();
+  setTargets([{ key: 'raw', name: meshLabel(o), meshes: [o], color: 0xffd43b }]);
   selectedRaw = o;
-  highlightMesh(o, 0xd8c58a);
-  computeFade(); applyLayers(); renderRawInfo(o); setNavActive(null);
+  renderRawInfo(o); setNavActive(null);
 }
 function deselect() {
   backContext = null;
@@ -328,8 +396,9 @@ function isSelected(m) { return highlightSet.has(m); }
 function applyLayers() {
   for (const m of allMeshes) {
     if (isSelected(m)) {                 // 选中的结构：无论所在层亮度多少，一律实心可见
+      const ghost = !!focusKey && !focusMeshes.has(m);   // 聚焦别的部位时变成淡影
       m.visible = true;
-      m.material.transparent = false; m.material.opacity = 1; m.material.depthWrite = true;
+      m.material.transparent = ghost; m.material.opacity = ghost ? 0.18 : 1; m.material.depthWrite = !ghost;
       m.material.needsUpdate = true; continue;
     }
     let op = layerOpacity[m.userData.layer];
@@ -472,7 +541,7 @@ function bindRelated(back) {
 }
 function renderFunctionInfo(f) {
   currentStruct = null;
-  const chips = structChips(f.members || [], f.fine || []);
+  const chips = targetChips(f.members || [], f.fine || []);
   const dis = (f.dis || []).map(id => disById.get(id)).filter(Boolean);
   panel.innerHTML = `
     <div class="p-head" style="border-color:#c7b48a">
@@ -482,7 +551,7 @@ function renderFunctionInfo(f) {
     </div>
     <div class="p-body">
       <div class="edit-bar"><button id="funcEditBtn">✏️ 编辑此功能</button></div>
-      <section><h3>🧩 参与的脑区（点开看单个，可返回）</h3><div class="chips">${chips || '<span style="color:var(--muted)">未选脑区</span>'}</div></section>
+      <section><h3>🧩 参与的脑区（点名字单独看）</h3><div class="chips">${chips || '<span style="color:var(--muted)">未选脑区</span>'}</div></section>
       ${f.detail ? `<section><h3>📖 说明</h3><p>${rich(f.detail)}</p></section>` : ''}
       ${f.points && f.points.length ? `<section><h3>📚 要点</h3>${listHtml(f.points)}</section>` : ''}
       ${dis.length ? `<section><h3>🧬 相关疾病（点开看病变机理）</h3><div class="chips">${dis.map(d => `<button class="chip" data-dis="${d.id}">${esc(d.name)}</button>`).join('')}</div></section>` : ''}
@@ -490,8 +559,8 @@ function renderFunctionInfo(f) {
     </div>`;
   document.getElementById('funcEditBtn').onclick = () => renderFuncEdit(f);
   const back = { label: f.name, fn: () => selectFunction(f), navId: 'fn:' + f.id };
-  panel.querySelectorAll('.chip[data-id]').forEach(c =>
-    c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+  viewBack = back;
+  bindTargetChips();
   bindRelated(back);
   panel.scrollTop = 0;
 }
@@ -499,20 +568,18 @@ function renderFunctionInfo(f) {
 function renderGroupInfo(name, ids, navId) {
   currentStruct = null;
   const members = ids.map(id => structById.get(id)).filter(Boolean);
-  const chips = members.map(s =>
-    `<button class="chip" data-id="${s.id}"><span class="dot" style="background:${hex(s.color)}"></span>${esc(s.name)}</button>`).join('');
+  const chips = targetChips(ids);
   panel.innerHTML = `
     <div class="p-head" style="border-color:#8ea3b0">
       <div class="p-tag">结构分区</div>
       <h2>${esc(name)}</h2>
-      <div class="p-sub">该分区包含 ${members.length} 个结构，已一起高亮。点下面任意一个看详情。</div>
+      <div class="p-sub">该分区包含 ${members.length} 个结构，已一起高亮。点名字在模型上单独看它，图例里可打开脑区卡。</div>
     </div>
     <div class="p-body">
       <section><h3>🧩 包含的结构</h3><div class="chips">${chips || '<span style="color:var(--muted)">（空）</span>'}</div></section>
     </div>`;
-  const back = { label: name, fn: () => selectGroup(name, ids, navId), navId };
-  panel.querySelectorAll('.chip').forEach(c =>
-    c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+  viewBack = { label: name, fn: () => selectGroup(name, ids, navId), navId };
+  bindTargetChips();
   panel.scrollTop = 0;
 }
 // 编辑 / 新建功能
@@ -757,10 +824,14 @@ function backBtnHtml() {
 function bindBackBtn() {
   if (backContext) document.getElementById('backBtn').onclick = backContext.fn;
 }
-function structChips(ids, fine = []) {
-  return ids.map(id => structById.get(id)).filter(Boolean).map(s =>
-    `<button class="chip" data-id="${s.id}"><span class="dot" style="background:${hex(s.color)}"></span>${esc(s.name)}</button>`).join('') +
-    fine.map(f => `<span class="chip fine-chip"><span class="dot"></span>${esc(f.split('=')[1] || f)}</span>`).join('');
+// 部位芯片：颜色与模型上的高亮一致；点一下在模型上单独看它（再点取消）
+function targetChips(ids, fine = []) {
+  return targetSpecs(ids, fine).map(sp =>
+    `<button class="chip tchip" data-tkey="${sp.key}" title="点一下在模型上单独看它"><span class="dot" style="background:${hex(sp.color)}"></span>${esc(sp.name)}</button>`).join('');
+}
+function bindTargetChips() {
+  panel.querySelectorAll('.tchip[data-tkey]').forEach(c => c.onclick = () => toggleFocus(c.dataset.tkey));
+  paintTargets();
 }
 
 // ---------- 真题选项卡：按年份浏览，点开题目看脑机制 ----------
@@ -815,7 +886,8 @@ function qRow(q, kw = '') {
 function mechBox(q, b) {
   return `<div class="mech-box">
     <div class="mech-title">🧠 ${esc(b.title)}</div>
-    <div class="chips">${structChips(b.structs, b.fine || [])}</div>
+    <div class="chips-hint">👇 点部位名，在模型上单独看它</div>
+    <div class="chips">${targetChips(b.structs, b.fine || [])}</div>
     ${richList(b.steps, true)}
     ${q.extra ? `<p class="mech-extra">👉 ${esc(q.extra)}</p>` : ''}
     ${b.dis ? `<button class="link" data-dis="${b.dis.id}">在「变态」专栏看${esc(b.dis.name)}的治疗与相关脑区 ›</button>` : ''}
@@ -830,7 +902,7 @@ function highlightQuestion(qid) {
 function bindQuestionList(rerender) {
   panel.querySelectorAll('.q.has-brain').forEach(li => {
     li.onclick = e => {
-      if (e.target.closest('button')) return;      // 点脑区芯片/链接时不折叠
+      if (e.target.closest('button, .mech-box')) return;      // 点展开内容（芯片、链接、文字）时不折叠
       openQid = openQid === li.dataset.qrow ? null : li.dataset.qrow;
       rerender();
       highlightQuestion(openQid);
@@ -841,9 +913,10 @@ function bindQuestionList(rerender) {
   panel.querySelectorAll('.mech-box').forEach(box => {
     const q = qById.get(box.closest('[data-qrow]').dataset.qrow);
     const back = { label: q.short, fn: () => openQuestion(q.id), navId: 'yr:' + q.year };
-    box.querySelectorAll('.chip[data-id]').forEach(c => c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+    viewBack = back;
     box.querySelectorAll('[data-dis]').forEach(c => c.onclick = () => openDisorder(disById.get(c.dataset.dis), back));
   });
+  bindTargetChips();
 }
 // 进入一个真题视图：先清掉高亮（展开某题时再亮），记住怎么重画
 function examView(navId, render, back = null) {
@@ -964,14 +1037,15 @@ function renderDisorderInfo(d) {
     </div>
     <div class="p-body">
       ${backBtnHtml()}
-      <section><h3>🧠 相关脑区（已高亮）</h3><div class="chips">${structChips(d.structs, d.fine || [])}</div></section>
+      <section><h3>🧠 相关脑区（已高亮，点名字单独看）</h3><div class="chips">${targetChips(d.structs, d.fine || [])}</div></section>
       <section><h3>🧬 病变机理</h3>${richList(d.mech, true)}</section>
       <section><h3>💊 治疗如何作用于大脑</h3>${richList(d.treat)}</section>
       ${qs.length ? `<section><h3>📝 考过的真题（点开看）</h3><div class="chips">${qLinks(qs)}</div></section>` : ''}
     </div>`;
   bindBackBtn();
   const back = { label: d.name, fn: () => openDisorder(d), navId: 'dis:' + d.id };
-  panel.querySelectorAll('.chip[data-id]').forEach(c => c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+  viewBack = back;
+  bindTargetChips();
   bindRelated(back);
   panel.scrollTop = 0;
 }
@@ -1011,17 +1085,14 @@ function toggleSide(side) {
 document.getElementById('toggleLeft').onclick = () => toggleSide('left');
 document.getElementById('toggleRight').onclick = () => toggleSide('right');
 
-// ---------- 标签 ----------
+// ---------- 标签：引线标注 ----------
 const labelLayer = document.getElementById('labels');
-let labelItems = [];
-function buildLabels() {
-  labelItems = activeStructs.filter(s => s._center).map(s => {
-    const e = document.createElement('div');
-    e.className = 'label'; e.textContent = s.name;
-    e.onclick = () => selectStructure(s);
-    labelLayer.appendChild(e);
-    return { el: e, s };
-  });
+const leaderSvg = document.getElementById('leaders');
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
 }
 // 结构/网格的中文显示名（供悬停提示）
 function meshLabel(o) {
@@ -1032,30 +1103,47 @@ function meshLabel(o) {
 const hovtip = document.getElementById('hovtip');
 
 const _v = new THREE.Vector3();
+// 标签排成大脑左右两列，按高度排开互不重叠，每个标签拉一条引线指向它在模型上的位置
 function projectLabels() {
-  const r = el.getBoundingClientRect();
-  const placed = [];
-  // 把标签钉到三维位置；和已放好的标签重叠就往下挪，避免互相遮住
-  const place = (le, center) => {
-    _v.copy(center).project(camera);
-    if (_v.z >= 1) { le.style.opacity = 0; return; }
-    const x = (_v.x * .5 + .5) * r.width, w = le.offsetWidth || 60, h = 22;
-    let y = (-_v.y * .5 + .5) * r.height;
-    for (let k = 0; k < 12; k++) {
-      const hit = placed.find(p => x < p.x + p.w && p.x < x + w && Math.abs(y - p.y) < h);
-      if (!hit) break;
-      y = hit.y + h;
-    }
-    placed.push({ x, y, w });
-    le.style.transform = `translate(${x}px, ${y}px)`;
-    le.style.opacity = 1;
+  if (!targets.length) return;
+  const W = el.clientWidth, H = el.clientHeight;
+  _v.copy(target).project(camera);
+  const cx = (_v.x * .5 + .5) * W;
+  const dist = camera.position.distanceTo(target);
+  const R = brainRadius * 1.1 / (dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) * (H / 2);
+  const tb = document.getElementById('toolbar'), lg = document.getElementById('legend');
+  const bounds = {
+    L: { top: 44, bottom: lg.hidden ? H - 50 : lg.offsetTop - 16 },
+    R: { top: tb.offsetTop + tb.offsetHeight + 12, bottom: H - 50 }
   };
-  // 只钉住"当前选中结构"的标签，其余不显示，避免密密麻麻
-  for (const { el: le, s } of labelItems) {
-    if (!selectedStructs.includes(s)) { le.style.opacity = 0; continue; }
-    place(le, s._center);
+  const gap = 26, cols = { L: [], R: [] };
+  for (const t of targets) {
+    if (!t.anchors.length) continue;
+    let a = t.anchors[0];
+    for (const c of t.anchors) if (c.distanceToSquared(camera.position) < a.distanceToSquared(camera.position)) a = c;
+    _v.copy(a).project(camera);
+    const hide = _v.z >= 1;
+    t.el.style.visibility = t.line.style.visibility = t.dot.style.visibility = hide ? 'hidden' : '';
+    if (hide) continue;
+    const ax = (_v.x * .5 + .5) * W, ay = (-_v.y * .5 + .5) * H;
+    cols[ax < cx ? 'L' : 'R'].push({ t, ax, ay, w: t.el.offsetWidth || 70 });
   }
-  for (const t of fineTargets) place(t.el, t.center);
+  for (const side of ['L', 'R']) {
+    const col = cols[side].sort((p, q) => p.ay - q.ay), { top, bottom } = bounds[side];
+    const stack = () => { let y = top - gap; for (const it of col) { it.y = Math.max(it.y, y + gap); y = it.y; } return y; };
+    for (const it of col) it.y = it.ay;
+    const over = stack() - bottom;
+    if (over > 0) { for (const it of col) it.y -= over; stack(); }   // 超出底部：整列上移再排一次
+    for (const it of col) {
+      let x = side === 'L' ? cx - R - 18 - it.w : cx + R + 18;
+      x = Math.max(6, Math.min(W - it.w - 6, x));
+      const ex = side === 'L' ? x + it.w : x, t = it.t;
+      t.el.style.transform = `translate(${x}px, ${it.y - 12}px)`;
+      t.line.setAttribute('x1', it.ax); t.line.setAttribute('y1', it.ay);
+      t.line.setAttribute('x2', ex); t.line.setAttribute('y2', it.y);
+      t.dot.setAttribute('cx', it.ax); t.dot.setAttribute('cy', it.ay);
+    }
+  }
 }
 
 // ---------- 循环 ----------
@@ -1066,6 +1154,11 @@ function resize() {
 }
 window.addEventListener('resize', resize); resize();
 function loop() {
+  if (camGoal) {
+    const dt = Math.atan2(Math.sin(camGoal.theta - theta), Math.cos(camGoal.theta - theta));
+    theta += dt * 0.12; phi += (camGoal.phi - phi) * 0.12;
+    if (Math.abs(dt) < 0.003 && Math.abs(camGoal.phi - phi) < 0.003) camGoal = null;
+  }
   updateCamera();
   if (modelReady) {
     const obj = dragging ? null : pick();

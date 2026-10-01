@@ -105,9 +105,9 @@
   .p-body b, .mech-box b{color:#fff; font-weight:700;}
   ul.mech-steps{list-style:disc;}
   .mech-extra{margin-top:8px; font-size:13px; color:#e7d6a8!important;}
-  .fine-chip{cursor:default; border-color:#6b5a2e; color:#ffe29a;}
-  .fine-chip .dot{background:#ffc94a;}
-  .label.fine{border-color:#ffc94a; color:#ffe29a;}
+  /* 面板里的部位按钮：颜色点 = 模型上的颜色，点一下聚焦 */
+  .tchip.active{background:#2b3446; border-color:#fff; color:#fff; box-shadow:0 0 0 1px #fff inset;}
+  .chips-hint{font-size:11px; color:var(--muted); margin:10px 0 6px;}
   details summary{cursor:pointer; font-size:14px; font-weight:700; margin-bottom:8px;}
   .bar-row{cursor:pointer;}
   .bar-row .bar-name{width:118px; flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -116,9 +116,30 @@
   #stage{position:relative;}
   #scene{position:absolute; inset:0;}
   #labels{position:absolute; inset:0; pointer-events:none;}
-  .label{position:absolute; top:0; left:0; font-size:12px; color:#fff; font-weight:600;
-    background:rgba(13,16,23,.8); padding:2px 8px; border-radius:6px; border:1px solid var(--accent);
-    transform-origin:center; white-space:nowrap; margin:-10px 0 0 8px; pointer-events:none;}
+  /* 模型两侧的标签 + 引线（标签排在大脑外面，引线指到部位上） */
+  #leaders{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible;}
+  #leaders line{stroke-width:1.6; transition:opacity .15s;}
+  #leaders circle{stroke:#0d1017; stroke-width:1.5; transition:opacity .15s;}
+  .callout{position:absolute; top:0; left:0; display:flex; align-items:center; gap:6px;
+    font-size:12px; font-weight:600; color:#fff; background:rgba(13,16,23,.9);
+    border:1.5px solid var(--c); border-radius:7px; padding:3px 9px; white-space:nowrap;
+    pointer-events:auto; cursor:pointer; transition:opacity .15s; user-select:none;}
+  .callout:hover{background:#1d2431;}
+  .callout.dim{opacity:.3;}
+  .callout.on{box-shadow:0 0 0 2px var(--c); font-size:13px;}
+  /* 模型左下角的图例 */
+  #legend{position:absolute; left:12px; bottom:44px; z-index:12; max-width:280px;
+    background:rgba(22,27,36,.92); border:1px solid var(--line); border-radius:12px;
+    padding:8px 10px; display:flex; flex-wrap:wrap; gap:4px; box-shadow:0 6px 18px rgba(0,0,0,.35);}
+  #legend[hidden]{display:none;}
+  .lg-title{width:100%; font-size:11px; color:var(--muted); margin-bottom:2px;}
+  .lg-item{display:flex; align-items:center; gap:5px; background:var(--panel2); color:#cdd6e4;
+    border:1px solid var(--line); border-radius:12px; padding:2px 9px; font-size:11px; cursor:pointer; font-family:inherit;}
+  .lg-item:hover{background:#28313f;}
+  .lg-item.active{border-color:#fff; color:#fff; background:#2b3446;}
+  .lg-info{width:100%; font-size:12px; line-height:1.6; color:#cdd6e4; margin-top:6px;
+    border-top:1px solid var(--line); padding-top:6px;}
+  .lg-info .link{display:block; margin-top:4px; font-size:12px;}
   #hovtip{position:fixed; top:0; left:0; font-size:12px; color:#fff;
     background:rgba(13,16,23,.9); padding:3px 9px; border-radius:6px; border:1px solid var(--line);
     white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .08s; z-index:20;}
@@ -201,7 +222,9 @@
 
   <main id="stage">
     <div id="scene"></div>
+    <svg id="leaders"></svg>
     <div id="labels"></div>
+    <div id="legend" hidden></div>
     <div id="hovtip"></div>
     <div id="dragLeft" class="drag-handle left" title="拖动调节左栏宽度"></div>
     <div id="dragRight" class="drag-handle right" title="拖动调节右栏宽度"></div>
@@ -218,7 +241,7 @@
         <input type="file" id="importFile" accept="application/json" hidden>
       </div>
     </div>
-    <div class="tip">拖拽旋转 · 滚轮缩放 · 悬停显示名称 · 点击查看详情</div>
+    <div class="tip">拖拽旋转 · 滚轮缩放 · 悬停显示名称 · 点彩色标签单独看一个部位</div>
     <div id="status">加载中…</div>
   </main>
 
@@ -228,11 +251,11 @@
   { "imports": { "three": "./vendor/three.module.js" } }
   </script>
   <!-- ?v= 让浏览器不用旧版缓存；改了 app.js/data.js 且有人反映还是旧版时，把数字加一 -->
-  <script type="module" src="./app.js?v=4"></script>
+  <script type="module" src="./app.js?v=5"></script>
   <script>
     // 自检：app.js 没执行、或执行的是浏览器缓存里的旧版时，在页面顶部提示强制刷新
     window.addEventListener('load', function () {
-      if (window.__PSYCH_APP_VERSION === 4) return;
+      if (window.__PSYCH_APP_VERSION === 5) return;
       var d = document.createElement('div');
       d.className = 'stale-banner';
       d.innerHTML = '⚠ 页面没有完整更新（浏览器用了缓存里的旧文件）。请按 <b>Ctrl + Shift + R</b>，或<b>按住 Ctrl 再点刷新按钮</b>。';
