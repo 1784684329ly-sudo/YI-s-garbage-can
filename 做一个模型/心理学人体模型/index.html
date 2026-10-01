@@ -141,6 +141,9 @@
   #status{position:absolute; top:12px; left:12px; font-size:11px; color:var(--muted);
     background:rgba(22,27,36,.8); padding:5px 10px; border-radius:8px; max-width:60%;}
   #status:empty{display:none;}
+  .stale-banner{position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:50;
+    background:#7a2e2e; color:#fff; border:1px solid #c45a5a; border-radius:10px;
+    padding:10px 16px; font-size:14px; box-shadow:0 6px 18px rgba(0,0,0,.4);}
   /* 右侧信息卡 */
   #panel{background:var(--panel); border-left:1px solid var(--line); overflow-y:auto;}
   .p-head{padding:18px 20px 14px; border-bottom:3px solid var(--accent);}
@@ -201,5 +204,15 @@
   </script>
   <!-- ?v= 让浏览器不用旧版缓存；改了 app.js/data.js 且有人反映还是旧版时，把数字加一 -->
   <script type="module" src="./app.js?v=2"></script>
+  <script>
+    // 自检：app.js 没执行、或执行的是浏览器缓存里的旧版时，在页面顶部提示强制刷新
+    window.addEventListener('load', function () {
+      if (window.__PSYCH_APP_VERSION === 2) return;
+      var d = document.createElement('div');
+      d.className = 'stale-banner';
+      d.innerHTML = '⚠ 页面没有完整更新（浏览器用了缓存里的旧文件）。请按 <b>Ctrl + Shift + R</b>，或<b>按住 Ctrl 再点刷新按钮</b>。';
+      document.body.appendChild(d);
+    });
+  </script>
 </body>
 </html>

@@ -9,6 +9,8 @@ import { ATLAS } from './atlas.js';
 import { SUBJECTS, TOPICS } from './exam.js';
 import { QUESTIONS } from './questions.js';
 
+window.__PSYCH_APP_VERSION = 2;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
+
 // ---------- 场景 ----------
 const canvasWrap = document.getElementById('scene');
 const scene = new THREE.Scene();
