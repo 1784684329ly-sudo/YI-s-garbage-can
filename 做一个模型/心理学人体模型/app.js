@@ -4,7 +4,7 @@
 // ============================================================
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js';
+import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=2';
 import { ATLAS } from './atlas.js';
 import { SUBJECTS, TOPICS } from './exam.js';
 import { QUESTIONS } from './questions.js';

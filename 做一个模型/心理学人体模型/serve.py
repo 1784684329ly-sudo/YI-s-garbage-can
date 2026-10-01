@@ -9,6 +9,7 @@ import http.server
 import os
 import socket
 import sys
+import time
 import webbrowser
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -65,7 +66,8 @@ def main():
         print(f'  注意：在 {PREFERRED_PORT} 端口网页里保存的修改，在新端口看不到。')
         print(f'  把其他黑色窗口都关掉、再双击启动，就会回到 {PREFERRED_PORT} 端口。\n')
 
-    url = f'http://localhost:{port}/index.html'
+    # 网址带上时间戳：浏览器里存着的旧版 index.html 不会被拿来用
+    url = f'http://localhost:{port}/index.html?v={int(time.time())}'
     print(f'已启动：{url}')
     print(f'文件夹：{ROOT}')
     print('看完直接关掉这个窗口即可。')

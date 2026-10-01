@@ -199,6 +199,7 @@
   <script type="importmap">
   { "imports": { "three": "./vendor/three.module.js" } }
   </script>
-  <script type="module" src="./app.js"></script>
+  <!-- ?v= 让浏览器不用旧版缓存；改了 app.js/data.js 且有人反映还是旧版时，把数字加一 -->
+  <script type="module" src="./app.js?v=2"></script>
 </body>
 </html>
