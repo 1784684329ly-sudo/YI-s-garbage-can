@@ -4,12 +4,13 @@
 // ============================================================
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
-import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=2';
+import { STRUCTURES, SYSTEMS, STRUCTURE_TREE, FUNCTION_TREE, FUNCTIONS } from './data.js?v=3';
 import { ATLAS } from './atlas.js';
-import { SUBJECTS, TOPICS } from './exam.js';
-import { QUESTIONS } from './questions.js';
+import { QUESTIONS } from './questions.js?v=3';
+import { MECHS } from './mechanisms.js';
+import { DISORDER_GROUPS, DISORDERS } from './disorders.js';
 
-window.__PSYCH_APP_VERSION = 2;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
+window.__PSYCH_APP_VERSION = 3;   // 与 index.html 的自检对应：版本对不上说明浏览器用了旧缓存
 
 // ---------- 场景 ----------
 const canvasWrap = document.getElementById('scene');
@@ -61,6 +62,9 @@ const layerOpacity = { cortex: 1.0, limbic: 1.0, deep: 1.0 };
 
 const allMeshes = [];
 let modelReady = false;
+// 细分网格：去掉左右(_l/_r)与重名(_2)后缀的基名 → 网格列表，供金色细分高亮使用
+const meshesByBase = new Map();
+function meshBase(name) { return name.replace(/_\d+$/, '').replace(/_(l|r)$/i, ''); }
 
 // ---------- 加载 glb ----------
 const loader = new GLTFLoader();
@@ -118,6 +122,11 @@ loader.load('./models/brain.glb', (gltf) => {
     if (!s._meshes.length) continue;
     s._center = s._meshes.reduce((a, m) => a.add(m.userData.center.clone()), new THREE.Vector3())
       .multiplyScalar(1 / s._meshes.length);
+  }
+  for (const o of allMeshes) {
+    const b = meshBase(o.name);
+    if (!meshesByBase.has(b)) meshesByBase.set(b, []);
+    meshesByBase.get(b).push(o);
   }
 
   buildLabels();
@@ -221,6 +230,30 @@ function restore(m) {
 function clearHighlight() {
   for (const m of highlightSet) restore(m);
   highlightSet.clear(); selectedStructs = []; selectedRaw = null; fadeLayers.clear();
+  for (const t of fineTargets) t.el.remove();
+  fineTargets = [];
+}
+// 金色细分高亮：中脑VTA、尾状核、眶额等没有单独结构卡的部位，带标签
+const FINE_COLOR = 0xffc94a;
+let fineTargets = [];   // [{ meshes, center, el }]
+// 高亮一组结构（整块、结构色）+ 细分网格（"网格基名=显示名"，金色）
+function showTargets(structIds = [], fine = []) {
+  clearHighlight();
+  selectedStructs = structIds.map(id => structById.get(id)).filter(Boolean);
+  for (const st of selectedStructs) for (const m of (st._meshes || [])) highlightMesh(m, st.color);
+  for (const spec of fine) {
+    const [base, label] = spec.split('=');
+    const meshes = meshesByBase.get(base) || [];
+    if (!meshes.length) continue;
+    for (const m of meshes) highlightMesh(m, FINE_COLOR);
+    const center = meshes.reduce((a, m) => a.add(m.userData.center.clone()), new THREE.Vector3())
+      .multiplyScalar(1 / meshes.length);
+    const el = document.createElement('div');
+    el.className = 'label fine'; el.textContent = (label || base).split('（')[0];   // 三维标签只放短名，括号说明留在右栏
+    labelLayer.appendChild(el);
+    fineTargets.push({ meshes, center, el });
+  }
+  computeFade(); applyLayers();
 }
 const _hi = new THREE.Color();
 function highlightMesh(m, color) {
@@ -242,12 +275,13 @@ function computeFade() {
   const layers = new Set();
   for (const st of selectedStructs) for (const m of (st._meshes || [])) layers.add(m.userData.layer);
   if (selectedRaw) layers.add(selectedRaw.userData.layer);
+  for (const t of fineTargets) for (const m of t.meshes) layers.add(m.userData.layer);
   if (!layers.size) return;
   if (layers.has('deep') || layers.has('limbic')) fadeLayers.add('cortex');
   if (layers.has('deep')) fadeLayers.add('limbic');
 }
 let backContext = null;   // 从功能/集合卡点进单个结构时记住来源，便于返回
-let pendingView = null;   // 模型没加载完时打开的真题视图，加载后重放以补上高亮
+let pendingView = null;   // 模型没加载完时打开的视图，加载后重放以补上高亮
 function selectStructure(s, back = null) {
   backContext = back;
   clearHighlight();
@@ -342,27 +376,29 @@ const FIELDS = [
   { key: 'disorders', label: '相关精神病变', icon: '🩺', type: 'list' },
   { key: 'experiments', label: '相关实验与理论', icon: '🔬', type: 'list' },
   { key: 'treatment', label: '治疗原理', icon: '💊', type: 'list' },
-  { key: 'exam', label: '考研考点关联', icon: '🎯', type: 'list' },
 ];
 
-// ---------- 真题考点（exam.js + questions.js）----------
-const topicById = new Map(TOPICS.map(t => [t.id, t]));
-const subjectById = new Map(SUBJECTS.map(s => [s.id, s]));
-const qsByTopic = new Map(TOPICS.map(t => [t.id, []]));
-for (const q of QUESTIONS) for (const id of q.topics) qsByTopic.get(id)?.push(q);
-const topicsByStruct = new Map();
-for (const t of TOPICS) for (const sid of t.structs) {
-  if (!topicsByStruct.has(sid)) topicsByStruct.set(sid, []);
-  topicsByStruct.get(sid).push(t);
-}
+// ---------- 真题 · 脑机制 · 疾病（questions.js / mechanisms.js / disorders.js）----------
+const mechById = new Map(MECHS.map(m => [m.id, m]));
+const disById = new Map(DISORDERS.map(d => [d.id, d]));
+const qById = new Map(QUESTIONS.map(q => [q.id, q]));
 const YEARS = [...new Set(QUESTIONS.map(q => q.year))].sort((a, b) => b - a);
-const qsOf = t => qsByTopic.get(t.id) || [];
-const yearsOf = t => [...new Set(qsOf(t).map(q => q.year))].sort((a, b) => b - a);
-
-const EXAM_KEY = 'psychExamEdits_v1';
-let examEdits = (() => { try { return JSON.parse(localStorage.getItem(EXAM_KEY)) || {}; } catch { return {}; } })();
-function persistExam() { try { localStorage.setItem(EXAM_KEY, JSON.stringify(examEdits)); } catch {} }
-function withTopicEdits(t) { return examEdits[t.id] ? { ...t, ...examEdits[t.id] } : t; }
+// 一道题对应的脑机制：mech 直接取；dis 用该疾病的病变机理
+function brainOf(q) {
+  if (q.mech) return mechById.get(q.mech) || null;
+  const d = q.dis && disById.get(q.dis);
+  return d ? { title: d.name + '的病变机理', structs: d.structs, fine: d.fine || [], steps: d.mech, dis: d } : null;
+}
+function pushTo(map, k, v) { if (!map.has(k)) map.set(k, []); map.get(k).push(v); }
+const brainQs = QUESTIONS.filter(brainOf);
+const qsByStruct = new Map(), qsByFn = new Map(), qsByDis = new Map(), disByStruct = new Map();
+for (const q of brainQs) {
+  const b = brainOf(q);
+  for (const sid of b.structs) pushTo(qsByStruct, sid, q);
+  for (const fid of (b.fn || [])) pushTo(qsByFn, fid, q);
+  if (q.dis) pushTo(qsByDis, q.dis, q);
+}
+for (const d of DISORDERS) for (const sid of d.structs) pushTo(disByStruct, sid, d);
 
 function esc(t) { return String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 function listHtml(items) { return '<ul>' + (items || []).map(t => `<li>${esc(t)}</li>`).join('') + '</ul>'; }
@@ -388,24 +424,29 @@ function renderInfo(sRaw) {
       ${backContext ? `<button class="back-btn" id="backBtn">← 返回「${esc(backContext.label)}」</button>` : ''}
       <div class="edit-bar"><button id="editBtn">✏️ 编辑 / 增加内容</button></div>
       ${body}
-      ${topicChipsSection(topicsByStruct.get(sRaw.id))}
+      ${structRelated(sRaw.id)}
     </div>`;
   if (backContext) document.getElementById('backBtn').onclick = backContext.fn;
   document.getElementById('editBtn').onclick = () => renderEdit(sRaw);
-  bindTopicChips({ label: s.name, fn: () => selectStructure(sRaw), navId: sRaw.id });
+  bindRelated({ label: s.name, fn: () => selectStructure(sRaw), navId: sRaw.id });
   panel.scrollTop = 0;
 }
-// 「📝 真题考点」小节：考点 chip，点开进考点卡（可返回）
-function topicChipsSection(topics) {
-  if (!topics || !topics.length) return '';
-  const n = new Set(topics.flatMap(t => qsOf(t).map(q => q.id))).size;
-  const chips = topics.map(t =>
-    `<button class="chip" data-topic="${t.id}">${esc(t.name)}<span class="cnt">${qsOf(t).length}题</span></button>`).join('');
-  return `<section><h3>📝 北大347真题考点（${topics.length}个考点 · ${n}道题）</h3><div class="chips">${chips}</div></section>`;
+// 真题短链接：点开跳到「真题」里展开该题的脑机制
+function qLinks(qs) {
+  return qs.map(q => `<button class="chip sm" data-q="${q.id}">${q.year}·${esc(q.short)}</button>`).join('');
 }
-function bindTopicChips(back) {
-  panel.querySelectorAll('[data-topic]').forEach(c =>
-    c.onclick = () => selectTopic(topicById.get(c.dataset.topic), back));
+function structRelated(sid) {
+  const ds = disByStruct.get(sid) || [], qs = qsByStruct.get(sid) || [];
+  let html = '';
+  if (ds.length) html += `<section><h3>🧬 相关疾病（${ds.length}，点开看病变机理）</h3><div class="chips">` +
+    ds.map(d => `<button class="chip" data-dis="${d.id}">${esc(d.name)}</button>`).join('') + '</div></section>';
+  if (qs.length) html += `<section><details><summary>📝 涉及这个脑区的真题（${qs.length}）</summary>` +
+    `<div class="chips">${qLinks(qs)}</div></details></section>`;
+  return html;
+}
+function bindRelated(back) {
+  panel.querySelectorAll('[data-q]').forEach(c => c.onclick = () => openQuestion(c.dataset.q, back));
+  panel.querySelectorAll('[data-dis]').forEach(c => c.onclick = () => openDisorder(disById.get(c.dataset.dis), back));
 }
 function renderFunctionInfo(f) {
   currentStruct = null;
@@ -423,13 +464,13 @@ function renderFunctionInfo(f) {
       <section><h3>🧩 参与的脑区（点开看单个，可返回）</h3><div class="chips">${chips || '<span style="color:var(--muted)">未选脑区</span>'}</div></section>
       ${f.detail ? `<section><h3>📖 说明</h3><p>${esc(f.detail)}</p></section>` : ''}
       ${f.points && f.points.length ? `<section><h3>📚 心理学知识点</h3>${listHtml(f.points)}</section>` : ''}
-      ${topicChipsSection((f.topics || []).map(id => topicById.get(id)).filter(Boolean))}
+      ${(qsByFn.get(f.id) || []).length ? `<section><h3>📝 相关真题（点开看脑机制）</h3><div class="chips">${qLinks(qsByFn.get(f.id))}</div></section>` : ''}
     </div>`;
   document.getElementById('funcEditBtn').onclick = () => renderFuncEdit(f);
   const back = { label: f.name, fn: () => selectFunction(f), navId: 'fn:' + f.id };
   panel.querySelectorAll('.chip[data-id]').forEach(c =>
     c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
-  bindTopicChips(back);
+  bindRelated(back);
   panel.scrollTop = 0;
 }
 // 集合区域信息卡（额叶/边缘系统等）
@@ -576,9 +617,9 @@ function renderEdit(sRaw) {
 }
 
 // ---------- 导出/导入 ----------
-// 导出三类修改：结构卡/网格补充、功能分组、真题考点笔记。旧版只导出了结构卡。
+// 导出两类修改：结构卡/网格补充、功能分组。旧版只导出了结构卡。
 document.getElementById('exportBtn').onclick = () => {
-  const data = { app: 'psych-model', version: 2, structEdits: userEdits, funcStore, examEdits };
+  const data = { app: 'psych-model', version: 3, structEdits: userEdits, funcStore };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = '我的修改.json'; a.click(); URL.revokeObjectURL(a.href);
@@ -593,8 +634,7 @@ document.getElementById('importFile').onchange = e => {
       if (data && data.app === 'psych-model') {
         userEdits = data.structEdits || {};
         funcStore = data.funcStore || { edits: {}, custom: [] };
-        examEdits = data.examEdits || {};
-        persistFunc(); persistExam();
+        persistFunc();
       } else {
         userEdits = data;                 // 旧版导出文件：只有结构卡修改
       }
@@ -608,7 +648,7 @@ document.getElementById('importFile').onchange = e => {
   r.readAsText(f);
 };
 
-// ---------- 侧栏目录：两个选项卡（按结构 / 按功能） ----------
+// ---------- 侧栏目录：四个选项卡（结构 / 功能 / 真题 / 变态） ----------
 const nav = document.getElementById('nav');
 function hex(c) { return '#' + c.toString(16).padStart(6, '0'); }
 function structItem(s) {
@@ -668,129 +708,69 @@ let currentTab = 'struct';
 function rebuildNav() {
   if (currentTab === 'struct') buildStructureTab();
   else if (currentTab === 'func') buildFunctionTab();
-  else buildExamTab();
+  else if (currentTab === 'exam') buildExamTab();
+  else buildDisTab();
 }
 document.getElementById('tab-struct').onclick = () => { setTab('struct'); buildStructureTab(); };
 document.getElementById('tab-func').onclick = () => { setTab('func'); buildFunctionTab(); };
 document.getElementById('tab-exam').onclick = () => { setTab('exam'); buildExamTab(); showExamOverview(); };
+document.getElementById('tab-dis').onclick = () => { setTab('dis'); buildDisTab(); selectDisorder(DISORDERS[0]); };
 function setTab(which) {
   currentTab = which;
-  for (const t of ['struct', 'func', 'exam'])
+  for (const t of ['struct', 'func', 'exam', 'dis'])
     document.getElementById('tab-' + t).classList.toggle('active', which === t);
 }
 setTab('struct'); buildStructureTab();
 
-// ---------- 真题选项卡：按考点 / 按年份 + 搜索 ----------
-let examMode = 'topic', examQuery = '';
+function navItem(id, nameHtml, badge, onclick) {
+  const item = document.createElement('div');
+  item.className = 'nav-item'; item.dataset.id = id;
+  item.innerHTML = `<span class="nm">${nameHtml}</span>${badge ? `<span class="badge">${badge}</span>` : ''}`;
+  item.onclick = onclick;
+  return item;
+}
+function backBtnHtml() {
+  return backContext ? `<button class="back-btn" id="backBtn">← 返回「${esc(backContext.label)}」</button>` : '';
+}
+function bindBackBtn() {
+  if (backContext) document.getElementById('backBtn').onclick = backContext.fn;
+}
+function structChips(ids, fine = []) {
+  return ids.map(id => structById.get(id)).filter(Boolean).map(s =>
+    `<button class="chip" data-id="${s.id}"><span class="dot" style="background:${hex(s.color)}"></span>${esc(s.name)}</button>`).join('') +
+    fine.map(f => `<span class="chip fine-chip"><span class="dot"></span>${esc(f.split('=')[1] || f)}</span>`).join('');
+}
+
+// ---------- 真题选项卡：按年份浏览，点开题目看脑机制 ----------
+let examQuery = '', onlyBrain = false, openQid = null;
+let rerenderExamView = () => {};
 function buildExamTab() {
   nav.innerHTML = '';
   const tools = document.createElement('div');
   tools.className = 'exam-tools';
   tools.innerHTML = `
-    <div class="subtabs">
-      <button class="subtab" data-m="topic">按考点</button>
-      <button class="subtab" data-m="year">按年份</button>
-    </div>
-    <input class="search" id="examSearch" type="search" placeholder="🔍 搜题目或考点，如：强化、效度">`;
+    <input class="search" id="examSearch" type="search" placeholder="🔍 搜题目或机制，如：强化、多巴胺">
+    <label class="toggle"><input type="checkbox" id="onlyBrain"> 只看涉及大脑的题</label>`;
   nav.appendChild(tools);
-  tools.querySelectorAll('.subtab').forEach(b => {
-    b.classList.toggle('active', b.dataset.m === examMode);
-    b.onclick = () => { examMode = b.dataset.m; examQuery = ''; buildExamTab(); };
-  });
-  const inp = tools.querySelector('#examSearch');
-  inp.value = examQuery;
+  const inp = tools.querySelector('#examSearch'), cb = tools.querySelector('#onlyBrain');
+  inp.value = examQuery; cb.checked = onlyBrain;
   let timer = 0;
   inp.oninput = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
       examQuery = inp.value.trim();
-      fillExamList();
       if (examQuery) showSearch(examQuery); else showExamOverview();
     }, 200);
   };
-  const list = document.createElement('div');
-  list.id = 'examList';
-  nav.appendChild(list);
-  fillExamList();
-}
-function topicMatches(t, kw) {
-  const tt = withTopicEdits(t);
-  return [tt.name, ...(tt.points || []), ...(tt.notes || []), ...qsOf(t).map(q => q.text)]
-    .some(s => String(s).toLowerCase().includes(kw));
-}
-function fillExamList() {
-  const list = document.getElementById('examList');
-  if (!list) return;
-  list.innerHTML = '';
-  const kw = examQuery.toLowerCase();
-  if (!kw) {
-    const ov = document.createElement('div');
-    ov.className = 'nav-item'; ov.dataset.id = 'exam:overview';
-    ov.textContent = '📊 考情总览';
-    ov.onclick = showExamOverview;
-    list.appendChild(ov);
+  cb.onchange = () => { onlyBrain = cb.checked; rerenderExamView(); };
+  nav.appendChild(navItem('exam:overview', '📊 真题里的大脑', null, showExamOverview));
+  const cat = document.createElement('div');
+  cat.className = 'nav-cat'; cat.textContent = '按年份';
+  nav.appendChild(cat);
+  for (const y of YEARS) {
+    const qs = QUESTIONS.filter(q => q.year === y);
+    nav.appendChild(navItem('yr:' + y, `${y} 年`, `🧠 ${qs.filter(brainOf).length}/${qs.length}`, () => showYear(y)));
   }
-  if (examMode === 'year' && !kw) {
-    for (const y of YEARS) {
-      const item = document.createElement('div');
-      item.className = 'nav-item'; item.dataset.id = 'yr:' + y;
-      item.innerHTML = `<span class="nm">${y} 年</span><span class="badge">${QUESTIONS.filter(q => q.year === y).length}题</span>`;
-      item.onclick = () => showYear(y);
-      list.appendChild(item);
-    }
-    return;
-  }
-  let shown = 0;
-  for (const sub of SUBJECTS) {
-    const tps = TOPICS.filter(t => t.subject === sub.id && (!kw || topicMatches(t, kw)));
-    if (!tps.length) continue;
-    const n = new Set(tps.flatMap(t => qsOf(t).map(q => q.id))).size;
-    const cat = document.createElement('div');
-    cat.className = 'nav-cat clickable';
-    cat.innerHTML = `${sub.name}<span class="cat-hint">${n}题 · 点击看全部</span>`;
-    cat.onclick = () => showSubject(sub, tps);
-    list.appendChild(cat);
-    let ch = null;
-    for (const t of tps) {
-      if (t.ch && t.ch !== ch) {
-        ch = t.ch;
-        const h = document.createElement('div'); h.className = 'nav-head'; h.textContent = ch;
-        list.appendChild(h);
-      }
-      list.appendChild(topicItem(t));
-      shown++;
-    }
-  }
-  if (kw && !shown) list.insertAdjacentHTML('beforeend', '<div class="empty-hint">没有匹配的考点</div>');
-}
-function topicItem(t) {
-  const item = document.createElement('div');
-  item.className = 'nav-item'; item.dataset.id = 'tp:' + t.id;
-  item.innerHTML = `<span class="nm">${t.structs.length ? '<span title="关联脑区，点开会高亮">🧠 </span>' : ''}${esc(t.name)}</span>` +
-    `<span class="badge">${qsOf(t).length}题</span><div class="nav-sub">${yearsOf(t).join(' · ')}</div>`;
-  item.onclick = () => selectTopic(t);
-  return item;
-}
-
-// 选中考点：关联脑区一起高亮 + 考点卡
-function selectTopic(t, back = null) {
-  if (!t) return;
-  backContext = back;
-  clearHighlight();
-  selectedStructs = t.structs.map(id => structById.get(id)).filter(Boolean);
-  for (const st of selectedStructs) for (const m of (st._meshes || [])) highlightMesh(m, st.color);
-  computeFade(); applyLayers(); renderTopicInfo(t);
-  setNavActive(back ? back.navId : 'tp:' + t.id);
-  if (!modelReady) pendingView = () => selectTopic(t, back);
-}
-// 不涉及脑区的真题视图（总览/年份/科目/搜索）：清空高亮，只换右栏
-function showExamView(navId, render) {
-  backContext = null;
-  clearHighlight(); applyLayers(); setNavActive(navId);
-  currentStruct = null;
-  render();
-  panel.scrollTop = 0;
-  if (!modelReady) pendingView = () => {};
 }
 function hl(text, kw) {
   const s = esc(text);
@@ -798,149 +778,180 @@ function hl(text, kw) {
   const k = esc(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return s.replace(new RegExp(k, 'gi'), m => `<mark>${m}</mark>`);
 }
-// 一道题：年份题号分值科目 + 题干 + 涉及的（其他）考点
-function qHtml(q, exceptId = null, kw = '') {
-  const others = q.topics.filter(id => id !== exceptId).map(id => topicById.get(id)).filter(Boolean);
-  const chips = others.map(t => `<button class="chip sm" data-topic="${t.id}">${esc(t.name)}</button>`).join('');
-  return `<li>
-    <div class="qmeta"><b>${q.year}年 第${esc(q.no)}题</b><span>${q.score}分</span><span class="qsub">${esc(q.subject)}</span></div>
+// 一道题：带 🧠 的可点开，展开后是脑机制（步骤 + 脑区），模型同步高亮
+function qRow(q, kw = '') {
+  const b = brainOf(q);
+  if (!b && onlyBrain) return '';
+  const open = b && q.id === openQid;
+  return `<li class="q ${b ? 'has-brain' : 'no-brain'}${open ? ' open' : ''}" data-qrow="${q.id}">
+    <div class="qmeta"><b>${q.year}年 第${esc(q.no)}题</b><span>${q.score}分</span><span class="qsub">${esc(q.subject)}</span>
+      ${b ? `<span class="qbrain">${open ? '▾ 收起' : '🧠 点开看脑机制'}</span>` : '<span class="qnone">不涉及脑机制</span>'}</div>
     <p>${hl(q.text, kw)}</p>
-    ${chips ? `<div class="chips qtopics"><span class="qlabel">${exceptId ? '也涉及' : '考点'}</span>${chips}</div>` : ''}
+    ${open ? mechBox(q, b) : ''}
   </li>`;
 }
-function renderTopicInfo(tRaw) {
-  currentStruct = null;
-  const t = withTopicEdits(tRaw);
-  const sub = subjectById.get(t.subject);
-  const qs = qsOf(tRaw);
-  const structs = tRaw.structs.map(id => structById.get(id)).filter(Boolean);
-  const chips = structs.map(s =>
-    `<button class="chip" data-id="${s.id}"><span class="dot" style="background:${hex(s.color)}"></span>${esc(s.name)}</button>`).join('');
-  panel.innerHTML = `
-    <div class="p-head" style="border-color:#c7b48a">
-      <div class="p-tag">真题考点 · ${esc(sub ? sub.name : '')}${t.ch ? ' · ' + esc(t.ch) : ''}</div>
-      <h2>${esc(t.name)}</h2>
-      <div class="p-sub">考过 ${qs.length} 题：${yearsOf(tRaw).join('、')}</div>
-    </div>
-    <div class="p-body">
-      ${backContext ? `<button class="back-btn" id="backBtn">← 返回「${esc(backContext.label)}」</button>` : ''}
-      <div class="edit-bar"><button id="topicEditBtn">✏️ 修改要点 / 写笔记</button></div>
-      ${structs.length ? `<section><h3>🧠 相关脑区（已高亮，点开看单个）</h3><div class="chips">${chips}</div></section>` : ''}
-      <section><h3>📚 核心要点</h3>${listHtml(t.points)}</section>
-      ${t.notes && t.notes.length ? `<section><h3>📝 我的笔记</h3>${listHtml(t.notes)}</section>` : ''}
-      <section><h3>🗂 历年真题（${qs.length}）</h3><ul class="qlist">${qs.map(q => qHtml(q, tRaw.id)).join('')}</ul></section>
-    </div>`;
-  if (backContext) document.getElementById('backBtn').onclick = backContext.fn;
-  document.getElementById('topicEditBtn').onclick = () => renderTopicEdit(tRaw);
-  const back = { label: t.name, fn: () => selectTopic(tRaw), navId: 'tp:' + tRaw.id };
-  panel.querySelectorAll('.chip[data-id]').forEach(c =>
-    c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
-  bindTopicChips(back);
-  panel.scrollTop = 0;
+function mechBox(q, b) {
+  return `<div class="mech-box">
+    <div class="mech-title">🧠 ${esc(b.title)}</div>
+    <div class="chips">${structChips(b.structs, b.fine || [])}</div>
+    <ol class="mech-steps">${b.steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol>
+    ${q.extra ? `<p class="mech-extra">👉 ${esc(q.extra)}</p>` : ''}
+    ${b.dis ? `<button class="link" data-dis="${b.dis.id}">在「变态」专栏看${esc(b.dis.name)}的治疗与相关脑区 ›</button>` : ''}
+  </div>`;
 }
-function renderTopicEdit(t) {
-  const cur = withTopicEdits(t);
-  panel.innerHTML = `
-    <div class="p-head" style="border-color:#c7b48a"><div class="p-tag">编辑考点</div><h2>${esc(t.name)}</h2>
-      <div class="p-sub">改完点保存，存在本浏览器；可用右上角“导出”备份。</div></div>
-    <div class="p-body">
-      <div class="fld"><label>📚 核心要点 <span class="fhint">每行一条</span></label>
-        <textarea id="tp-points" rows="${Math.min(24, Math.max(6, cur.points.length * 3))}">${esc(cur.points.join('\n'))}</textarea></div>
-      <div class="fld"><label>📝 我的笔记 <span class="fhint">每行一条，如答题框架、易错点</span></label>
-        <textarea id="tp-notes" rows="5">${esc((cur.notes || []).join('\n'))}</textarea></div>
-      <div class="edit-actions">
-        <button id="tpSave" class="primary">💾 保存</button>
-        <button id="tpCancel">取消</button>
-        ${examEdits[t.id] ? '<button id="tpReset" class="ghost">恢复默认</button>' : ''}
-      </div></div>`;
-  const lines = id => document.getElementById(id).value.split('\n').map(x => x.trim()).filter(Boolean);
-  document.getElementById('tpSave').onclick = () => {
-    const points = lines('tp-points'), edit = { notes: lines('tp-notes') };
-    if (points.join('\n') !== t.points.join('\n')) edit.points = points;   // 没改要点就不存，默认内容更新时能跟上
-    examEdits[t.id] = edit; persistExam(); renderTopicInfo(t);
-  };
-  document.getElementById('tpCancel').onclick = () => renderTopicInfo(t);
-  const rst = document.getElementById('tpReset');
-  if (rst) rst.onclick = () => { delete examEdits[t.id]; persistExam(); renderTopicInfo(t); };
-  panel.scrollTop = 0;
+function highlightQuestion(qid) {
+  const b = qid && brainOf(qById.get(qid));
+  if (b) showTargets(b.structs, b.fine || []);
+  else { clearHighlight(); applyLayers(); }
+  if (!modelReady) pendingView = () => highlightQuestion(qid);
 }
-function showYear(y) {
-  showExamView('yr:' + y, () => {
+function bindQuestionList(rerender) {
+  panel.querySelectorAll('.q.has-brain').forEach(li => {
+    li.onclick = e => {
+      if (e.target.closest('button')) return;      // 点脑区芯片/链接时不折叠
+      openQid = openQid === li.dataset.qrow ? null : li.dataset.qrow;
+      rerender();
+      highlightQuestion(openQid);
+      const row = openQid && panel.querySelector(`[data-qrow="${openQid}"]`);
+      if (row) row.scrollIntoView({ block: 'nearest' });
+    };
+  });
+  panel.querySelectorAll('.mech-box').forEach(box => {
+    const q = qById.get(box.closest('[data-qrow]').dataset.qrow);
+    const back = { label: q.short, fn: () => openQuestion(q.id), navId: 'yr:' + q.year };
+    box.querySelectorAll('.chip[data-id]').forEach(c => c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+    box.querySelectorAll('[data-dis]').forEach(c => c.onclick = () => openDisorder(disById.get(c.dataset.dis), back));
+  });
+}
+// 进入一个真题视图：先清掉高亮（展开某题时再亮），记住怎么重画
+function examView(navId, render, back = null) {
+  backContext = back; currentStruct = null; openQid = null;
+  clearHighlight(); applyLayers(); setNavActive(navId);
+  rerenderExamView = render;
+  render();
+  panel.scrollTop = 0;
+  if (!modelReady) pendingView = () => {};
+}
+function showYear(y, expand = null, back = null) {
+  const render = () => {
     const qs = QUESTIONS.filter(q => q.year === y);
-    const total = qs.reduce((a, q) => a + q.score, 0);
     panel.innerHTML = `
       <div class="p-head" style="border-color:#8ea3b0">
-        <div class="p-tag">历年真题</div>
-        <h2>${y} 年</h2>
-        <div class="p-sub">共 ${qs.length} 题 · 合计 ${total} 分${total > 300 ? '（含选做题）' : ''}</div>
+        <div class="p-tag">北大347真题</div><h2>${y} 年</h2>
+        <div class="p-sub">共 ${qs.length} 题，${qs.filter(brainOf).length} 题可以在大脑上看机制——点题目展开</div>
       </div>
-      <div class="p-body"><section><ul class="qlist">${qs.map(q => qHtml(q)).join('')}</ul></section></div>`;
-    bindTopicChips({ label: `${y} 年真题`, fn: () => showYear(y), navId: 'yr:' + y });
-  });
+      <div class="p-body">${backBtnHtml()}<ul class="qlist">${qs.map(q => qRow(q)).join('')}</ul></div>`;
+    bindBackBtn();
+    bindQuestionList(render);
+  };
+  examView('yr:' + y, render, back);
+  if (expand) {
+    openQid = expand;
+    render();
+    highlightQuestion(expand);
+    panel.querySelector(`[data-qrow="${expand}"]`)?.scrollIntoView({ block: 'start' });
+  }
 }
-function showSubject(sub, tps) {
-  showExamView(null, () => {
-    const n = new Set(tps.flatMap(t => qsOf(t).map(q => q.id))).size;
-    const secs = tps.map(t => `<section><h3><button class="link" data-topic="${t.id}">${esc(t.name)} ›</button></h3>
-      <ul class="qlist">${qsOf(t).map(q => qHtml(q, t.id, examQuery)).join('')}</ul></section>`).join('');
-    panel.innerHTML = `
-      <div class="p-head" style="border-color:#8ea3b0">
-        <div class="p-tag">科目</div><h2>${esc(sub.name)}</h2>
-        <div class="p-sub">${tps.length} 个考点 · ${n} 道题（一题可能涉及多个考点）</div>
-      </div>
-      <div class="p-body">${secs}</div>`;
-    bindTopicChips({ label: sub.name, fn: () => showSubject(sub, tps), navId: null });
-  });
+// 从结构卡/功能卡/疾病卡跳到某道题：切到「真题」并展开它
+function openQuestion(qid, back = null) {
+  const q = qById.get(qid);
+  if (!q) return;
+  if (currentTab !== 'exam') { setTab('exam'); buildExamTab(); }
+  showYear(q.year, qid, back);
 }
 function showSearch(kw) {
-  showExamView(null, () => {
+  const render = () => {
     const k = kw.toLowerCase();
-    const tps = TOPICS.filter(t => topicMatches(t, k));
-    const qs = QUESTIONS.filter(q => q.text.toLowerCase().includes(k) ||
-      q.topics.some(id => topicById.get(id)?.name.toLowerCase().includes(k)));
-    const chips = tps.map(t => `<button class="chip" data-topic="${t.id}">${esc(t.name)}<span class="cnt">${qsOf(t).length}题</span></button>`).join('');
+    const qs = QUESTIONS.filter(q => {
+      const b = brainOf(q);
+      return [q.text, q.short, b ? b.title : '', ...(b ? b.steps : [])].join(' ').toLowerCase().includes(k);
+    });
     panel.innerHTML = `
       <div class="p-head" style="border-color:#8ab4ff">
-        <div class="p-tag">搜索</div><h2>“${esc(kw)}”</h2>
-        <div class="p-sub">${tps.length} 个考点 · ${qs.length} 道题</div>
+        <div class="p-tag">搜索（题目和脑机制）</div><h2>“${esc(kw)}”</h2>
+        <div class="p-sub">找到 ${qs.length} 道题</div>
       </div>
-      <div class="p-body">
-        <section><h3>🧩 相关考点</h3><div class="chips">${chips || '<span style="color:var(--muted)">无</span>'}</div></section>
-        <section><h3>🗂 题目</h3><ul class="qlist">${qs.map(q => qHtml(q, null, kw)).join('') || '<li>没有题目直接包含这个词，可以看上面的相关考点。</li>'}</ul></section>
-      </div>`;
-    bindTopicChips({ label: `搜索“${kw}”`, fn: () => showSearch(kw), navId: null });
-  });
+      <div class="p-body"><ul class="qlist">${qs.map(q => qRow(q, kw)).join('') || '<li>没有找到相关的题。</li>'}</ul></div>`;
+    bindQuestionList(render);
+  };
+  examView(null, render);
 }
 function showExamOverview() {
-  showExamView('exam:overview', () => {
-    const cnt = {};
-    for (const q of QUESTIONS) cnt[q.subject] = (cnt[q.subject] || 0) + 1;
-    const max = Math.max(...Object.values(cnt));
-    const bars = Object.entries(cnt).sort((a, b) => b[1] - a[1]).map(([k, v]) =>
-      `<div class="bar-row"><span>${esc(k)}</span><div class="bar"><i style="width:${(v / max * 100).toFixed(1)}%"></i></div><b>${v}</b></div>`).join('');
-    const top = [...TOPICS].sort((a, b) => qsOf(b).length - qsOf(a).length || yearsOf(b)[0] - yearsOf(a)[0]).slice(0, 12);
-    const chips = top.map(t => `<button class="chip" data-topic="${t.id}">${esc(t.name)}<span class="cnt">${qsOf(t).length}题</span></button>`).join('');
-    const brainN = TOPICS.filter(t => t.structs.length).length;
+  const render = () => {
+    const rows = activeStructs.map(s => [s, (qsByStruct.get(s.id) || []).length])
+      .filter(r => r[1]).sort((a, b) => b[1] - a[1]);
+    const max = rows.length ? rows[0][1] : 1;
+    const bars = rows.map(([s, n]) => `<div class="bar-row" data-id="${s.id}" title="点开看${esc(s.name)}">
+      <span class="bar-name">${esc(s.name)}</span><div class="bar"><i style="width:${(n / max * 100).toFixed(1)}%;background:${hex(s.color)}"></i></div><b>${n}</b></div>`).join('');
     panel.innerHTML = `
       <div class="p-head" style="border-color:#c7b48a">
-        <div class="p-tag">北大347 · 心理学专业综合</div>
-        <h2>考情总览</h2>
-        <div class="p-sub">${YEARS[YEARS.length - 1]}–${YEARS[0]} 年 · ${QUESTIONS.length} 道题 · ${TOPICS.length} 个考点</div>
+        <div class="p-tag">北大347 · 2012–2026</div>
+        <h2>真题里的大脑</h2>
+        <div class="p-sub">${QUESTIONS.length} 道题中有 ${brainQs.length} 道可以在大脑上看机制</div>
       </div>
       <div class="p-body">
-        <section><h3>📊 各科题量（按真题表里的科目标签）</h3>${bars}</section>
-        <section><h3>🔥 考得最多的考点</h3><div class="chips">${chips}</div></section>
-        <section><h3>🧠 能在大脑上看的考点（${brainN} 个）</h3>
-          <p>左栏带 🧠 的考点关联了脑区，点开后这些脑区会在模型上高亮；统计、测量、实验设计、管理等考点不涉及脑区，只显示要点和真题。</p></section>
+        <section><h3>📊 真题中涉及最多的脑区（点名字看该脑区）</h3>${bars}</section>
         <section><h3>💡 用法</h3><ul>
-          <li>按考点：科目 → 考点，每个考点有核心要点和它考过的全部真题。</li>
-          <li>按年份：一年一年刷整套题，每题下面能跳到对应考点。</li>
-          <li>搜索：输入关键词（如“强化”“效度”）同时找题目和考点。</li>
-          <li>结构卡和功能卡底部也列出了相关的真题考点。</li>
+          <li>左边选年份，右边点带 🧠 的题目，展开它的脑机制，模型同时高亮相关脑区。</li>
+          <li>金色高亮是更精细的部位（如中脑VTA、尾状核、眶额），带标签。</li>
+          <li>统计、测量、管理等题不涉及脑机制，显示为灰色；勾选“只看涉及大脑的题”可隐藏。</li>
+          <li>问到疾病的题，展开的是该病的病变机理；完整内容在「变态」选项卡。</li>
         </ul></section>
       </div>`;
-    bindTopicChips({ label: '考情总览', fn: showExamOverview, navId: 'exam:overview' });
-  });
+    const back = { label: '真题里的大脑', fn: showExamOverview, navId: 'exam:overview' };
+    panel.querySelectorAll('.bar-row[data-id]').forEach(r => r.onclick = () => selectStructure(structById.get(r.dataset.id), back));
+  };
+  examView('exam:overview', render);
+}
+
+// ---------- 变态选项卡：各类心理障碍的病变机理 ----------
+function buildDisTab() {
+  nav.innerHTML = '';
+  for (const g of DISORDER_GROUPS) {
+    const cat = document.createElement('div');
+    cat.className = 'nav-cat'; cat.textContent = g.name;
+    nav.appendChild(cat);
+    for (const id of g.ids) {
+      const d = disById.get(id);
+      if (!d) continue;
+      const n = (qsByDis.get(id) || []).length;
+      nav.appendChild(navItem('dis:' + id, esc(d.name), n ? `${n}题` : null, () => selectDisorder(d)));
+    }
+  }
+}
+function openDisorder(d, back = null) {
+  if (!d) return;
+  if (currentTab !== 'dis') { setTab('dis'); buildDisTab(); }
+  selectDisorder(d, back);
+}
+function selectDisorder(d, back = null) {
+  backContext = back; currentStruct = null;
+  showTargets(d.structs, d.fine || []);
+  renderDisorderInfo(d);
+  setNavActive('dis:' + d.id);
+  if (!modelReady) pendingView = () => showTargets(d.structs, d.fine || []);
+}
+function renderDisorderInfo(d) {
+  const group = DISORDER_GROUPS.find(g => g.ids.includes(d.id));
+  const qs = qsByDis.get(d.id) || [];
+  panel.innerHTML = `
+    <div class="p-head" style="border-color:#c08a82">
+      <div class="p-tag">变态专栏 · ${esc(group ? group.name : '')}</div>
+      <h2>${esc(d.name)}<span class="en">（${esc(d.en)}）</span></h2>
+      <div class="p-sub">${esc(d.core)}</div>
+    </div>
+    <div class="p-body">
+      ${backBtnHtml()}
+      <section><h3>🧠 相关脑区（已高亮）</h3><div class="chips">${structChips(d.structs, d.fine || [])}</div></section>
+      <section><h3>🧬 病变机理</h3><ol class="mech-steps">${d.mech.map(t => `<li>${esc(t)}</li>`).join('')}</ol></section>
+      <section><h3>💊 治疗如何作用于大脑</h3>${listHtml(d.treat)}</section>
+      ${qs.length ? `<section><h3>📝 考过的真题（点开看）</h3><div class="chips">${qLinks(qs)}</div></section>` : ''}
+    </div>`;
+  bindBackBtn();
+  const back = { label: d.name, fn: () => openDisorder(d), navId: 'dis:' + d.id };
+  panel.querySelectorAll('.chip[data-id]').forEach(c => c.onclick = () => selectStructure(structById.get(c.dataset.id), back));
+  bindRelated(back);
+  panel.scrollTop = 0;
 }
 
 // ---------- 左右栏：可拖动调宽 + 一键收起/展开 ----------
@@ -1001,13 +1012,28 @@ const hovtip = document.getElementById('hovtip');
 const _v = new THREE.Vector3();
 function projectLabels() {
   const r = el.getBoundingClientRect();
+  const placed = [];
+  // 把标签钉到三维位置；和已放好的标签重叠就往下挪，避免互相遮住
+  const place = (le, center) => {
+    _v.copy(center).project(camera);
+    if (_v.z >= 1) { le.style.opacity = 0; return; }
+    const x = (_v.x * .5 + .5) * r.width, w = le.offsetWidth || 60, h = 22;
+    let y = (-_v.y * .5 + .5) * r.height;
+    for (let k = 0; k < 12; k++) {
+      const hit = placed.find(p => x < p.x + p.w && p.x < x + w && Math.abs(y - p.y) < h);
+      if (!hit) break;
+      y = hit.y + h;
+    }
+    placed.push({ x, y, w });
+    le.style.transform = `translate(${x}px, ${y}px)`;
+    le.style.opacity = 1;
+  };
   // 只钉住"当前选中结构"的标签，其余不显示，避免密密麻麻
   for (const { el: le, s } of labelItems) {
     if (!selectedStructs.includes(s)) { le.style.opacity = 0; continue; }
-    _v.copy(s._center).project(camera);
-    le.style.transform = `translate(${(_v.x * .5 + .5) * r.width}px, ${(-_v.y * .5 + .5) * r.height}px)`;
-    le.style.opacity = _v.z < 1 ? 1 : 0;
+    place(le, s._center);
   }
+  for (const t of fineTargets) place(t.el, t.center);
 }
 
 // ---------- 循环 ----------

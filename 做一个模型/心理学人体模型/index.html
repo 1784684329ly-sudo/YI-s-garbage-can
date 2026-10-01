@@ -34,7 +34,7 @@
   #sidebar{background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:14px 10px;}
   #sidebar h1{font-size:15px; margin-bottom:4px;}
   #sidebar .hint{font-size:11px; color:var(--muted); margin-bottom:14px; line-height:1.5;}
-  #tabs{display:flex; gap:6px; margin:10px 0 6px;}
+  #tabs{display:flex; gap:4px; margin:10px 0 6px;}
   .tab{flex:1; background:var(--panel2); color:var(--muted); border:1px solid var(--line);
     border-radius:8px; padding:7px 0; font-size:13px; cursor:pointer;}
   .tab.active{background:var(--accent); color:#0d1017; font-weight:600; border-color:var(--accent);}
@@ -87,6 +87,26 @@
   .bar-row b{width:28px; text-align:right; font-weight:400; color:var(--muted);}
   .bar{flex:1; height:8px; background:var(--panel2); border-radius:4px; overflow:hidden;}
   .bar i{display:block; height:100%; background:var(--accent); border-radius:4px;}
+  /* 真题：可展开的题目与脑机制 */
+  .toggle{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); cursor:pointer;}
+  .toggle input{accent-color:var(--accent);}
+  .q.has-brain{cursor:pointer; border-radius:8px; padding-left:8px!important; padding-right:8px!important; margin:0 -8px!important;}
+  .q.has-brain:hover{background:var(--panel2);}
+  .q.open{background:var(--panel2);}
+  .q.no-brain p{color:var(--muted);}
+  .qbrain{margin-left:auto; color:var(--accent);}
+  .qnone{margin-left:auto; opacity:.7;}
+  .mech-box{margin-top:10px; padding:12px; border:1px solid #6b5a2e; border-radius:10px; background:rgba(255,201,74,.06); cursor:default;}
+  .mech-title{font-size:14px; font-weight:700; color:#ffe29a; margin-bottom:8px;}
+  .mech-steps{margin:10px 0 0 18px!important; padding:0;}
+  .mech-steps li{font-size:13px; line-height:1.7; color:#cdd6e4; margin-bottom:6px;}
+  .mech-extra{margin-top:8px; font-size:13px; color:#e7d6a8!important;}
+  .fine-chip{cursor:default; border-color:#6b5a2e; color:#ffe29a;}
+  .fine-chip .dot{background:#ffc94a;}
+  .label.fine{border-color:#ffc94a; color:#ffe29a;}
+  details summary{cursor:pointer; font-size:14px; font-weight:700; margin-bottom:8px;}
+  .bar-row{cursor:pointer;}
+  .bar-row .bar-name{width:118px; flex:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   mark{background:rgba(138,180,255,.35); color:inherit; border-radius:3px; padding:0 1px;}
   /* 中间 3D */
   #stage{position:relative;}
@@ -165,11 +185,12 @@
 <body>
   <aside id="sidebar">
     <h1>🧠 心理学人体模型</h1>
-    <div class="hint">真实解剖大脑（Z-Anatomy）。点结构看详情；列表外的结构也能点、可自己补资料。「真题」里是北大347历年真题（2012–2026）和考点。</div>
+    <div class="hint">真实解剖大脑（Z-Anatomy）。点结构看详情；列表外的结构也能点、可自己补资料。「真题」点开题目看它在脑中的机制；「变态」是各类心理障碍的病变机理。</div>
     <div id="tabs">
-      <button id="tab-struct" class="tab active">按结构</button>
-      <button id="tab-func" class="tab">按功能</button>
+      <button id="tab-struct" class="tab active">结构</button>
+      <button id="tab-func" class="tab">功能</button>
       <button id="tab-exam" class="tab">真题</button>
+      <button id="tab-dis" class="tab">变态</button>
     </div>
     <div id="nav"></div>
   </aside>
@@ -203,11 +224,11 @@
   { "imports": { "three": "./vendor/three.module.js" } }
   </script>
   <!-- ?v= 让浏览器不用旧版缓存；改了 app.js/data.js 且有人反映还是旧版时，把数字加一 -->
-  <script type="module" src="./app.js?v=2"></script>
+  <script type="module" src="./app.js?v=3"></script>
   <script>
     // 自检：app.js 没执行、或执行的是浏览器缓存里的旧版时，在页面顶部提示强制刷新
     window.addEventListener('load', function () {
-      if (window.__PSYCH_APP_VERSION === 2) return;
+      if (window.__PSYCH_APP_VERSION === 3) return;
       var d = document.createElement('div');
       d.className = 'stale-banner';
       d.innerHTML = '⚠ 页面没有完整更新（浏览器用了缓存里的旧文件）。请按 <b>Ctrl + Shift + R</b>，或<b>按住 Ctrl 再点刷新按钮</b>。';
